@@ -400,4 +400,50 @@ describe('frames2dRenderer canvas bitmap path', () => {
     expect(memoFetches).toBeGreaterThan(0)
     handle.dispose()
   })
+
+  it('releases a finished one-shot track instead of retaining its bitmaps', async () => {
+    // The decode cache used to be memoized forever. One 256x256 RGBA frame is
+    // ~262 KB, so a real pack retained tens of megabytes for the life of the
+    // page, and once decoded memory outgrew the compositor every further decode
+    // waited — playback kept its timer and dropped the TAIL of each animation.
+    // A finished non-loop track is not coming back until the user asks for it,
+    // so its bitmaps must go.
+    const { ctx } = canvasSetup()
+    const handle = frames2dRenderer.mount(ctx, frames2dRenderer.validateConfig(CONFIG)) as Frames2dRendererHandle
+    await flush()
+    handle.setState('happy')
+    for (let i = 0; i < 6; i += 1) {
+      await vi.advanceTimersByTimeAsync(100)
+      await flush()
+    }
+    expect(handle.currentTrack()).toBe('idle')
+    // 'happy' has a single frame; once it settled into idle that bitmap is gone
+    // while the idle track stays cached.
+    expect(bitmaps.some(b => b.close.mock.calls.length > 0)).toBe(true)
+    expect(handle.cachedFrameCount()).toBeGreaterThan(0)
+    handle.dispose()
+  })
+
+  it('keeps the decoded cache from growing one frame per finished animation', async () => {
+    // Regression: the frame painted last was pinned so eviction would never
+    // blank the canvas, but the pin was only ever written from the <img>
+    // branch, so on the canvas path it pinned nothing — and every finished
+    // one-shot leaked its final frame. Playing five animations in a row must
+    // leave the cache at the idle track's size, not grow by one each time.
+    const { ctx } = canvasSetup()
+    const handle = frames2dRenderer.mount(ctx, frames2dRenderer.validateConfig(CONFIG)) as Frames2dRendererHandle
+    await flush()
+    const counts: number[] = []
+    for (const track of ['happy', 'standup', 'happy', 'standup', 'happy']) {
+      handle.setState(track)
+      for (let i = 0; i < 6; i += 1) {
+        await vi.advanceTimersByTimeAsync(100)
+        await flush()
+      }
+      counts.push(handle.cachedFrameCount())
+    }
+    // Flat, not monotonically rising.
+    expect(counts[counts.length - 1]).toBe(counts[0])
+    handle.dispose()
+  })
 })
