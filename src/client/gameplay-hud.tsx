@@ -369,6 +369,11 @@ export function GameplayHud(props: {
     const at = ui.snapshot?.interruptedAt
     if (at === undefined || at === interruptedWasRef.current) return
     interruptedWasRef.current = at
+    // A failure has its own phase, and a pack may map that phase straight onto
+    // the interruption art. Playing the beat as well would restart the same
+    // track a frame after the phase map already started it, which reads as a
+    // stutter. Stop for the pack; one beat per ending.
+    if (ui.snapshot?.phase === 'failed') return
     playBeat(def?.workInterrupt)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stamp edges only
   }, [ui.snapshot?.interruptedAt])
